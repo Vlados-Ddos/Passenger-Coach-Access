@@ -1,6 +1,5 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -22,41 +21,72 @@
     <DefineConstants>TRACE</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="I2.Localization">
+      <HintPath>..\..\DerailValley_Data\Managed\I2.Localization.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="0Harmony">
-      <HintPath>..\DerailValley_Data\Managed\UnityModManager\0Harmony.dll</HintPath>
+      <HintPath>..\..\DerailValley_Data\Managed\UnityModManager\0Harmony.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="Assembly-CSharp">
-      <HintPath>..\DerailValley_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <HintPath>..\..\DerailValley_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="DV.ThingTypes">
-      <HintPath>..\DerailValley_Data\Managed\DV.ThingTypes.dll</HintPath>
+      <HintPath>..\..\DerailValley_Data\Managed\DV.ThingTypes.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="DV.Telemetry">
-      <HintPath>..\DerailValley_Data\Managed\DV.Telemetry.dll</HintPath>
-    </Reference>
-    <Reference Include="MultiplayerAPI">
-      <HintPath>..\Mods\Multiplayer\MultiplayerAPI.dll</HintPath>
+      <HintPath>..\..\DerailValley_Data\Managed\DV.Telemetry.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>..\DerailValley_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>..\..\DerailValley_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
-      <HintPath>..\DerailValley_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <HintPath>..\..\DerailValley_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
-      <HintPath>..\DerailValley_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+      <HintPath>..\..\DerailValley_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.PhysicsModule">
-      <HintPath>..\DerailValley_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+      <HintPath>..\..\DerailValley_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine">
-      <HintPath>..\DerailValley_Data\Managed\UnityEngine.dll</HintPath>
+      <HintPath>..\..\DerailValley_Data\Managed\UnityEngine.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityModManager">
-      <HintPath>..\DerailValley_Data\Managed\UnityModManager\UnityModManager.dll</HintPath>
+      <HintPath>..\..\DerailValley_Data\Managed\UnityModManager\UnityModManager.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="DV.CharacterController">
+      <HintPath>..\..\DerailValley_Data\Managed\DV.CharacterController.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="DV.Utils">
+      <HintPath>..\..\DerailValley_Data\Managed\DV.Utils.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="DV.Common">
+      <HintPath>..\..\DerailValley_Data\Managed\DV.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>..\..\DerailValley_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Main.cs" />
+    <Compile Include="CoachGeometry.cs" />
+    <Compile Include="CoachRegistry.cs" />
+    <Compile Include="MultiplayerSync.cs" />
   </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
