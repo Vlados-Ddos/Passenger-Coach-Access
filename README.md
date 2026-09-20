@@ -9,9 +9,8 @@ Free end doors are not entry or exit points.
 
 The key and activation distance can be changed in the Unity Mod Manager menu (`Ctrl+F10`).
 
-Enjoy my Derail Valley mods? You can support my work on Ko-fi!
-
-[**Support me on Ko-fi**](https://ko-fi.com/7vlad7)
+# Enjoy my Derail Valley mods? You can support my work on Ko-fi!
+# [**Support me on Ko-fi**](https://ko-fi.com/7vlad7)
 
 
 ## Multiplayer
