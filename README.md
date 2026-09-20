@@ -9,6 +9,11 @@ Free end doors are not entry or exit points.
 
 The key and activation distance can be changed in the Unity Mod Manager menu (`Ctrl+F10`).
 
+Enjoy my Derail Valley mods? You can support my work on Ko-fi!
+
+[**Support me on Ko-fi**](https://ko-fi.com/7vlad7)
+
+
 ## Multiplayer
 
 When Multiplayer is active, the mod automatically registers through its API as required for all session participants. Therefore, the host and every client must have Passenger Coach Access enabled; this prevents a client without the mod from joining and desynchronizing coach access. For predictable behavior, use the same mod version for all players.
