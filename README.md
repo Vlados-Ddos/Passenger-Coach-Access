@@ -9,8 +9,11 @@ Free end doors are not entry or exit points.
 
 The key and activation distance can be changed in the Unity Mod Manager menu (`Ctrl+F10`).
 
-# Enjoy my Derail Valley mods? You can support my work on Ko-fi!
-# [**Support me on Ko-fi**](https://ko-fi.com/7vlad7)
+### Support
+
+Enjoy my Derail Valley mods? You can support my work on Ko-fi!
+
+[**Support me on Ko-fi**](https://ko-fi.com/7vlad7)
 
 
 ## Multiplayer
@@ -32,6 +35,12 @@ No Passenger Jobs data is modified: coach types are determined through its regis
 Свободные торцевые двери не являются точками входа или выхода.
 
 Клавишу и расстояние активации можно изменить в меню Unity Mod Manager (`Ctrl+F10`).
+
+### Поддержка
+
+Нравятся мои моды для Derail Valley? Вы можете поддержать мою работу на Ko-fi!
+
+[**Поддержать меня на Ko-fi**](https://ko-fi.com/7vlad7)
 
 ## Мультиплеер
 
