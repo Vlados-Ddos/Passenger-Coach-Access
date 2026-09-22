@@ -4,8 +4,8 @@ using MPAPI.Interfaces;
 using MPAPI.Interfaces.Packets;
 using MPAPI.Types;
 
-[assembly: System.Reflection.AssemblyVersion("1.33.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.33.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.34.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.34.0.0")]
 
 namespace PassengerCoachAccess
 {

@@ -5,8 +5,8 @@ using I2.Loc;
 using UnityEngine;
 using UnityModManagerNet;
 
-[assembly: AssemblyVersion("1.33.0.0")]
-[assembly: AssemblyFileVersion("1.33.0.0")]
+[assembly: AssemblyVersion("1.34.0.0")]
+[assembly: AssemblyFileVersion("1.34.0.0")]
 
 namespace PassengerCoachAccess
 {
@@ -47,8 +47,7 @@ namespace PassengerCoachAccess
         private static string noticeEn;
         private static float noticeUntil;
         private static readonly RaycastHit[] sightHits = new RaycastHit[32];
-        private static readonly Collider[] clearanceHits = new Collider[32];
-        private static readonly RaycastHit[] groundHits = new RaycastHit[64];
+        private static readonly AccessPlacement placement = new AccessPlacement();
 
         internal static float Distance { get { return MultiplayerSync.Distance; } }
         internal static string Text(string ru, string en)
@@ -79,7 +78,7 @@ namespace PassengerCoachAccess
             overlay.AddComponent<PromptOverlay>();
             MultiplayerSync.Initialize();
             if (WorldStreamingInit.IsLoaded) Registry.Attach(CarSpawner.Instance);
-            entry.Logger.Log("Passenger Coach Access 1.33 loaded; geometry and native interior access enabled.");
+            entry.Logger.Log("Passenger Coach Access 1.34 loaded; geometry and native interior access enabled.");
             return true;
         }
 
@@ -223,9 +222,13 @@ namespace PassengerCoachAccess
             // Door panels can lie slightly in front of the measured access plane.
             float range = Mathf.Max(0f, distance - 0.12f);
             int count = Physics.RaycastNonAlloc(ray, sightHits, range, controller.GetTraversableLayers(), QueryTriggerInteraction.Ignore);
-            if (count == sightHits.Length) return false;
-            for (int i = 0; i < count; i++) if (!IsPlayerCollider(sightHits[i].collider)) return false;
-            return true;
+            try
+            {
+                if (count == sightHits.Length) return false;
+                for (int i = 0; i < count; i++) if (!IsPlayerCollider(sightHits[i].collider)) return false;
+                return true;
+            }
+            finally { Array.Clear(sightHits, 0, count); }
         }
 
         private static void Execute(AccessAction selected)
@@ -239,8 +242,10 @@ namespace PassengerCoachAccess
             bool goingInside = !selected.IsInside || selected.Target != null;
             TrainCar destination = goingInside ? destinationDoor.Owner.Car : null;
             RaycastHit floor;
+            Vector3 position;
             if (goingInside)
             {
+                if (destination == null || destination.carLivery == null) return;
                 if (destination.carLivery.interiorPrefab != null && !destination.IsInteriorLoaded) destination.LoadInterior();
                 if (!destinationDoor.Owner.EnsureReady()) return;
                 destinationDoor = destinationDoor.Owner.RefreshDoor(destinationDoor);
@@ -253,62 +258,26 @@ namespace PassengerCoachAccess
                     Notify("За этой дверью не найден пол вагона.", "No coach floor was found behind this door.");
                     return;
                 }
+                // The native capsule center already includes skinWidth. Preserve
+                // the measured interior floor position and native teleport target.
+                position = floor.point;
+                if (!placement.HasClearance(position, capsule, controller.GetTraversableLayers()))
+                {
+                    Notify("Место за дверью занято или слишком тесное.", "The destination is obstructed or too narrow.");
+                    return;
+                }
             }
             else
             {
                 Physics.SyncTransforms();
-                if (!TryExteriorFloor(destinationDoor, out floor))
+                if (!placement.TryExterior(destinationDoor, capsule, controller.GetTraversableLayers(), out floor, out position))
                 {
                     Notify("Рядом с этой дверью нет безопасного места для выхода.", "No safe ground was found beside this door.");
                     return;
                 }
             }
-            // The game's capsule center already includes skinWidth. Pass the floor itself.
-            Vector3 position = floor.point;
-            if (!HasClearance(position))
-            {
-                Notify("Место за дверью занято или слишком тесное.", "The destination is obstructed or too narrow.");
-                return;
-            }
             if (APlayerTeleport.Instance == null) return;
             PlayerManager.TeleportPlayer(position, player.rotation, goingInside ? destination.interior : floor.transform, false, false);
-        }
-
-        private static bool TryExteriorFloor(CoachDoor door, out RaycastHit result)
-        {
-            Vector3 point = door.WorldThreshold + door.WorldNormal * Mathf.Max(1f, capsule.radius + 0.35f);
-            Vector3 origin = point + Vector3.up * 0.6f;
-            int count = Physics.RaycastNonAlloc(origin, Vector3.down, groundHits, 4f, controller.GetTraversableLayers(), QueryTriggerInteraction.Ignore);
-            result = default(RaycastHit);
-            if (count == groundHits.Length) return false;
-            float closest = float.MaxValue;
-            for (int i = 0; i < count; i++)
-            {
-                RaycastHit hit = groundHits[i];
-                if (hit.collider == null || IsPlayerCollider(hit.collider) || hit.normal.y < 0.65f ||
-                    TrainCar.Resolve(hit.transform) != null || hit.distance >= closest) continue;
-                closest = hit.distance;
-                result = hit;
-            }
-            return result.collider != null;
-        }
-
-        private static bool HasClearance(Vector3 position)
-        {
-            float halfLine = Mathf.Max(0f, capsule.height * 0.5f - capsule.radius);
-            // Start just above the support. A mesh that contains both the floor and walls
-            // must not reject its own floor merely because the capsule touches it.
-            Vector3 lower = position + Vector3.up * (capsule.radius + 0.02f);
-            Vector3 upper = lower + Vector3.up * (halfLine * 2f - 0.02f);
-            int count = Physics.OverlapCapsuleNonAlloc(upper, lower,
-                capsule.radius, clearanceHits, controller.GetTraversableLayers(), QueryTriggerInteraction.Ignore);
-            try
-            {
-                if (count == clearanceHits.Length) return false;
-                for (int i = 0; i < count; i++) if (!IsPlayerCollider(clearanceHits[i])) return false;
-                return true;
-            }
-            finally { Array.Clear(clearanceHits, 0, count); }
         }
 
         private static bool IsPlayerCollider(Collider collider)
