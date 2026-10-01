@@ -4,8 +4,8 @@ using MPAPI.Interfaces;
 using MPAPI.Interfaces.Packets;
 using MPAPI.Types;
 
-[assembly: System.Reflection.AssemblyVersion("1.34.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.34.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.35.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.35.0.0")]
 
 namespace PassengerCoachAccess
 {
@@ -14,6 +14,7 @@ namespace PassengerCoachAccess
         public int Protocol { get; set; }
         public int Revision { get; set; }
         public float ActivationDistance { get; set; }
+        public bool ShowInteractionPrompts { get; set; }
     }
 
     public sealed class CoachAccessSettingsRequest : IPacket
@@ -27,13 +28,14 @@ namespace PassengerCoachAccess.Multiplayer
 {
     public static class MultiplayerBridge
     {
-        private const int Protocol = 133;
+        private const int Protocol = 134;
         private static IServer server;
         private static IClient client;
         private static IMultiplayerAPI registeredApi;
         private static bool received;
         private static bool wrongProtocol;
         private static float hostDistance = 2.25f;
+        private static bool hostShowPrompts = true;
         private static float requestAt;
         private static float checkAt;
         private static int revision;
@@ -126,7 +128,8 @@ namespace PassengerCoachAccess.Multiplayer
         {
             bool isClient = IsClient();
             PassengerCoachAccess.MultiplayerSync.SetState(Session(), isClient,
-                isClient ? received : !broadcastPending, isClient && wrongProtocol, hostDistance);
+                isClient ? received : !broadcastPending, isClient && wrongProtocol, hostDistance,
+                isClient ? hostShowPrompts : Main.GetInteractionPromptsForMultiplayer());
         }
 
         private static void StartServer(IServer value)
@@ -189,6 +192,7 @@ namespace PassengerCoachAccess.Multiplayer
                     wrongProtocol = incompatible;
                     if (wrongProtocol) { received = false; PushState(); return; }
                     hostDistance = Main.SanitizeDistance(packet.ActivationDistance);
+                    hostShowPrompts = packet.ShowInteractionPrompts;
                     received = true;
                     PushState();
                 }));
@@ -204,6 +208,7 @@ namespace PassengerCoachAccess.Multiplayer
             wrongProtocol = false;
             receivedRevision = -1;
             hostDistance = 2.25f;
+            hostShowPrompts = true;
             PushState();
         }
 
@@ -219,7 +224,8 @@ namespace PassengerCoachAccess.Multiplayer
             {
                 Protocol = Protocol,
                 Revision = revision,
-                ActivationDistance = Main.GetActivationDistanceForMultiplayer()
+                ActivationDistance = Main.GetActivationDistanceForMultiplayer(),
+                ShowInteractionPrompts = Main.GetInteractionPromptsForMultiplayer()
             };
             if (player == null) server.SendPacketToAll(packet, true, true, null);
             else server.SendPacketToPlayer(packet, player, true);

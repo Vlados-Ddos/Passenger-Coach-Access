@@ -2,7 +2,7 @@
   "Id": "PassengerCoachAccess",
   "DisplayName": "Passenger Coach Access",
   "Author": "7Vlad7",
-  "Version": "1.2.0",
+  "Version": "1.2.1",
   "AssemblyName": "PassengerCoachAccess.dll",
   "EntryMethod": "PassengerCoachAccess.Main.Load",
   "Requirements": ["PassengerJobs"],

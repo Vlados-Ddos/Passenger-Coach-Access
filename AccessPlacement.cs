@@ -62,16 +62,39 @@ namespace PassengerCoachAccess
             return capsule != null && Clear(position, new Body(capsule), mask);
         }
 
+        internal bool HasSeatClearance(Vector3 position, CharacterController capsule, int mask, TrainCar coach)
+        {
+            return capsule != null && Clear(position, new Body(capsule), mask, coach);
+        }
+
         private bool Clear(Vector3 position, Body body, int mask)
+        {
+            return Clear(position, body, mask, null);
+        }
+
+        private bool Clear(Vector3 position, Body body, int mask, TrainCar ignoredCoach)
         {
             int count = Physics.OverlapCapsuleNonAlloc(position + body.Lower, position + body.Upper,
                 body.Radius, overlaps, mask, QueryTriggerInteraction.Ignore);
             try
             {
                 if (count == overlaps.Length) return false;
-                // Never exempt an entire support mesh: it can also contain walls.
-                // Other cars, the source coach and couplers remain physical obstacles.
-                for (int i = 0; i < count; i++) if (!body.IsPlayer(overlaps[i])) return false;
+                // Generic door/exterior checks never exempt a support mesh. The
+                // seat path passes only its owning coach below because stock
+                // interiors use one closed shell for both floor and walls;
+                // other cars and scenery remain physical obstacles.
+                for (int i = 0; i < count; i++)
+                {
+                    Collider value = overlaps[i];
+                    if (body.IsPlayer(value)) continue;
+                    // A stock passenger coach uses one closed walkable mesh for
+                    // floor and walls. A capsule placed at a measured seat anchor
+                    // is necessarily inside that shell, so treating the owning
+                    // coach as an external obstacle rejects every seat. Other
+                    // cars and scenery remain blocking obstacles.
+                    if (ignoredCoach != null && TrainCar.Resolve(value.transform) == ignoredCoach) continue;
+                    return false;
+                }
                 return true;
             }
             finally { Array.Clear(overlaps, 0, count); }

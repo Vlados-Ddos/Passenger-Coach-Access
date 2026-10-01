@@ -21,6 +21,7 @@ namespace PassengerCoachAccess
         private float nextNearby;
         private Vector3 lastOrigin;
         private int walkableMask;
+        private bool seatRefreshPending;
 
         internal void Attach(CarSpawner value)
         {
@@ -46,11 +47,13 @@ namespace PassengerCoachAccess
             foreach (KeyValuePair<TrainCar, CoachGeometry> pair in coaches)
             {
                 if (!ReferenceEquals(pair.Key, null)) pair.Key.OnDestroyCar -= Unregister;
+                SeatSession.Removing(pair.Value);
                 pair.Value.Dispose();
             }
             coaches.Clear(); pending.Clear(); pendingWork.Clear(); Nearby.Clear();
             spawner = null;
             cargo = null;
+            seatRefreshPending = false;
             Array.Clear(overlaps, 0, overlaps.Length);
             nextNearby = 0f;
         }
@@ -69,12 +72,25 @@ namespace PassengerCoachAccess
             pendingWork.Clear();
         }
 
+        internal void RefreshSeats()
+        {
+            if (!seatRefreshPending) return;
+            foreach (KeyValuePair<TrainCar, CoachGeometry> pair in coaches)
+            {
+                if (pair.Value == null) continue;
+                int before = pair.Value.Seats.Count;
+                if (!pair.Value.RefreshSeats()) return;
+                if (pair.Value.Seats.Count != before) return;
+            }
+            seatRefreshPending = false;
+        }
+
         internal void Recheck(TrainCar car)
         {
             if (car == null) return;
             pending.Remove(car);
             CoachGeometry existing;
-            if (coaches.TryGetValue(car, out existing)) existing.Invalidate();
+            if (coaches.TryGetValue(car, out existing)) { SeatSession.Removing(existing); existing.Invalidate(); seatRefreshPending = true; }
             else Register(car);
         }
 
@@ -104,6 +120,7 @@ namespace PassengerCoachAccess
                 car.couplers[0] == null || car.couplers[1] == null) { pending.Add(car); return; }
             coaches.Add(car, new CoachGeometry(car));
             car.OnDestroyCar += Unregister;
+            seatRefreshPending = true;
             nextNearby = 0f;
         }
 
@@ -114,6 +131,7 @@ namespace PassengerCoachAccess
             CoachGeometry geometry;
             if (!coaches.TryGetValue(car, out geometry)) return;
             car.OnDestroyCar -= Unregister;
+            SeatSession.Removing(geometry);
             geometry.Dispose();
             coaches.Remove(car);
             Nearby.Remove(geometry);

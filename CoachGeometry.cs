@@ -33,13 +33,36 @@ namespace PassengerCoachAccess
 
         internal bool IsAimed(Ray ray, Vector3 body, float reach, bool inside, out float distance)
         {
+            return IsAimedCore(ray, body, reach, inside, false, out distance);
+        }
+
+        internal bool IsAimedWhileMoving(Ray ray, Vector3 body, float reach, bool inside, out float distance)
+        {
+            return IsAimedCore(ray, body, reach, inside, true, out distance);
+        }
+
+        // PlayerManager.Car identifies the native reparent target, but it can
+        // briefly outlive the physical doorway crossing while the controller is
+        // moving.  Enter/Exit must be decided from the player's actual side of
+        // this doorway plane.  A point on the plane is kept on the outside side
+        // so standing immediately in front of a door cannot produce an Exit.
+        internal bool IsBodyInside(Vector3 body)
+        {
+            if (Owner.Frame == null) return false;
+            return Vector3.Dot(body - WorldThreshold, WorldNormal) < 0f;
+        }
+
+        private bool IsAimedCore(Ray ray, Vector3 body, float reach, bool inside, bool allowMovingBoundary,
+            out float distance)
+        {
             distance = 0f;
             if (Owner.Frame == null) return false;
             Vector3 origin = WorldThreshold;
             Vector3 normal = WorldNormal;
             Vector3 up = Owner.Frame.up;
             float side = Vector3.Dot(body - origin, normal);
-            if (inside ? side > 0.12f : side < -0.12f) return false;
+            float boundary = allowMovingBoundary ? 0.45f : 0.12f;
+            if (inside ? side > boundary : side < -boundary) return false;
             Vector3 right = Vector3.Cross(up, normal).normalized;
             float width = Owner.Frame.TransformVector(Vector3.Cross(Vector3.up, Normal).normalized * Width).magnitude;
             float height = Owner.Frame.TransformVector(Vector3.up * Height).magnitude;
@@ -71,7 +94,12 @@ namespace PassengerCoachAccess
     {
         internal readonly TrainCar Car;
         internal Transform Frame { get { return Car == null ? null : Car.interior; } }
+        internal bool Alive { get { return !disposed && Car != null && Car.gameObject.activeInHierarchy && Frame != null; } }
         internal readonly List<CoachDoor> Doors = new List<CoachDoor>(6);
+        internal readonly List<CoachSeat> Seats = new List<CoachSeat>(70);
+        private const float SeatBinSize = .75f;
+        private readonly Dictionary<SeatBin, List<CoachSeat>> seatIndex = new Dictionary<SeatBin, List<CoachSeat>>();
+        private int seatQueryToken;
         private readonly List<CameraTrigger> regions = new List<CameraTrigger>();
         private readonly List<Collider> walkables = new List<Collider>();
         private readonly List<CoachDoorAnchor> markers = new List<CoachDoorAnchor>();
@@ -106,6 +134,8 @@ namespace PassengerCoachAccess
                 Car.ExternalInteractableAboutToBeUnloaded -= InteriorUnloading;
             }
             Doors.Clear();
+            Seats.Clear();
+            seatIndex.Clear();
             walkables.Clear();
             regions.Clear();
             markers.Clear();
@@ -129,7 +159,8 @@ namespace PassengerCoachAccess
         internal void Invalidate()
         {
             dirty = true; retryAt = 0f;
-            Doors.Clear(); regions.Clear(); walkables.Clear(); markers.Clear();
+            Doors.Clear(); Seats.Clear(); seatIndex.Clear(); seatQueryToken = 0;
+            regions.Clear(); walkables.Clear(); markers.Clear();
         }
 
         internal CoachDoor RefreshDoor(CoachDoor previous)
@@ -175,6 +206,36 @@ namespace PassengerCoachAccess
             }
             dirty = Doors.Count == 0;
             if (dirty) return Unsupported();
+            BuildSeats();
+            return true;
+        }
+
+        private void BuildSeats()
+        {
+            Seats.Clear();
+            seatIndex.Clear();
+            seatQueryToken = 0;
+            if (!SeatData.Load(Main.Entry.Path) || SeatData.Seats == null) return;
+            for (int i = 0; i < SeatData.Seats.Length; i++)
+            {
+                CoachSeat seat = new CoachSeat { Owner = this, Definition = SeatData.Seats[i] };
+                Seats.Add(seat);
+                SeatBin bin = GetSeatBin(seat.Definition.Cushion);
+                List<CoachSeat> values;
+                if (!seatIndex.TryGetValue(bin, out values))
+                {
+                    values = new List<CoachSeat>(4);
+                    seatIndex.Add(bin, values);
+                }
+                values.Add(seat);
+            }
+        }
+
+        internal bool RefreshSeats()
+        {
+            if (!Alive || Seats.Count != 0) return true;
+            if (!SeatData.IsReady) return false;
+            BuildSeats();
             return true;
         }
 
@@ -224,6 +285,58 @@ namespace PassengerCoachAccess
             for (int i = 0; i < regions.Count; i++)
                 if (regions[i] != null && regions[i].box != null && regions[i].IsPointInside(body)) return true;
             return false;
+        }
+
+        internal bool FindSeat(Ray ray, Vector3 body, float reach, out CoachSeat result, out float distance)
+        {
+            result = null; distance = float.MaxValue;
+            if (!EnsureReady() || seatIndex.Count == 0) return false;
+            if (++seatQueryToken == int.MaxValue)
+            {
+                seatQueryToken = 1;
+                for (int i = 0; i < Seats.Count; i++) Seats[i].LastQueryToken = 0;
+            }
+            // Walk the ray through a small local spatial index.  The old linear
+            // scan examined every one of the 68 anchors on every frame; this
+            // visits only bins crossed by the camera ray and their neighbours.
+            const float worldStep = .35f;
+            int samples = Mathf.CeilToInt(reach / worldStep) + 1;
+            for (int sample = 0; sample <= samples; sample++)
+            {
+                float along = Mathf.Min(reach, sample * worldStep);
+                SeatBin centre = GetSeatBin(Frame.InverseTransformPoint(ray.GetPoint(along)));
+                for (int dx = -1; dx <= 1; dx++)
+                    for (int dz = -1; dz <= 1; dz++)
+                    {
+                        List<CoachSeat> values;
+                        if (!seatIndex.TryGetValue(new SeatBin(centre.X + dx, centre.Z + dz), out values)) continue;
+                        for (int i = 0; i < values.Count; i++)
+                        {
+                            CoachSeat seat = values[i];
+                            if (seat.LastQueryToken == seatQueryToken) continue;
+                            seat.LastQueryToken = seatQueryToken;
+                            float hit;
+                            if (seat.Occupied || !seat.IsAimed(ray, body, reach, out hit) || hit >= distance) continue;
+                            result = seat; distance = hit;
+                        }
+                    }
+            }
+            return result != null;
+        }
+
+        private static SeatBin GetSeatBin(Vector3 local)
+        {
+            return new SeatBin(Mathf.FloorToInt(local.x / SeatBinSize), Mathf.FloorToInt(local.z / SeatBinSize));
+        }
+
+        private struct SeatBin : IEquatable<SeatBin>
+        {
+            internal readonly int X;
+            internal readonly int Z;
+            internal SeatBin(int x, int z) { X = x; Z = z; }
+            public bool Equals(SeatBin other) { return X == other.X && Z == other.Z; }
+            public override bool Equals(object value) { return value is SeatBin && Equals((SeatBin)value); }
+            public override int GetHashCode() { unchecked { return (X * 397) ^ Z; } }
         }
 
         private void BuildSideDoors()

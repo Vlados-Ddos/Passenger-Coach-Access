@@ -20,6 +20,7 @@ namespace PassengerCoachAccess
         private static bool ready = true;
         private static bool wrongProtocol;
         private static float hostDistance;
+        private static bool hostShowPrompts = true;
 
         public static bool InSession { get { return inSession; } }
         public static bool IsClient { get { return isClient; } }
@@ -28,6 +29,7 @@ namespace PassengerCoachAccess
         {
             get { return IsClient && ready ? Main.SanitizeDistance(hostDistance) : Main.GetActivationDistanceForMultiplayer(); }
         }
+        internal static bool ShowInteractionPrompts { get { return IsClient && ready ? hostShowPrompts : Main.Settings == null || Main.Settings.ShowInteractionPrompts; } }
 
         public static void Initialize()
         {
@@ -96,13 +98,14 @@ namespace PassengerCoachAccess
             catch (Exception exception) { ReportFailure(exception); }
         }
 
-        public static void SetState(bool session, bool client, bool isReady, bool incompatible, float distance)
+        public static void SetState(bool session, bool client, bool isReady, bool incompatible, float distance, bool showPrompts = true)
         {
             inSession = session;
             isClient = client;
             ready = isReady;
             wrongProtocol = incompatible;
             hostDistance = Main.SanitizeDistance(distance);
+            hostShowPrompts = showPrompts;
         }
 
         public static void ReportFailure(Exception exception)

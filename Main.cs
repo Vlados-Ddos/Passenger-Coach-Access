@@ -5,8 +5,9 @@ using I2.Loc;
 using UnityEngine;
 using UnityModManagerNet;
 
-[assembly: AssemblyVersion("1.34.0.0")]
-[assembly: AssemblyFileVersion("1.34.0.0")]
+[assembly: AssemblyVersion("1.35.0.0")]
+[assembly: AssemblyFileVersion("1.35.0.0")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("PassengerCoachAccess.SeatAudit")]
 
 namespace PassengerCoachAccess
 {
@@ -14,6 +15,7 @@ namespace PassengerCoachAccess
     {
         public KeyBinding AccessKey = new KeyBinding();
         public float ActivationDistance = 2.25f;
+        public bool ShowInteractionPrompts = true;
 
         public CoachAccessSettings()
         {
@@ -39,17 +41,31 @@ namespace PassengerCoachAccess
         private static CustomFirstPersonController controller;
         private static CharacterController capsule;
         private static AccessAction action;
-        private static float nextInput;
         private static float nextVisibility;
         private static CoachDoor visibleDoor;
         private static bool visible;
+        private static CoachDoor executableDoor;
+        private static bool executable;
+        private static float nextExecutableCheck;
         private static string noticeRu;
         private static string noticeEn;
         private static float noticeUntil;
         private static readonly RaycastHit[] sightHits = new RaycastHit[32];
         private static readonly AccessPlacement placement = new AccessPlacement();
+        private static PropertyInfo keyBindingKeyControl;
+        private static PropertyInfo keyControlWasPressedThisFrame;
+        private static Type keyControlRuntimeType;
+        private static float nextInputWarning;
 
         internal static float Distance { get { return MultiplayerSync.Distance; } }
+        internal static bool HasPlayerClearance(Vector3 position, CharacterController value, int mask)
+        {
+            return placement.HasClearance(position, value, mask);
+        }
+        internal static bool HasSeatClearance(Vector3 position, CharacterController value, int mask, CoachGeometry owner)
+        {
+            return owner != null && placement.HasSeatClearance(position, value, mask, owner.Car);
+        }
         internal static string Text(string ru, string en)
         {
             // Read the game's current UI language, including changes made during play.
@@ -68,6 +84,12 @@ namespace PassengerCoachAccess
             Settings = UnityModManager.ModSettings.Load<CoachAccessSettings>(entry);
             Settings.ActivationDistance = SanitizeDistance(Settings.ActivationDistance);
             if (Settings.AccessKey == null) Settings.AccessKey = new CoachAccessSettings().AccessKey;
+            keyBindingKeyControl = typeof(KeyBinding).GetProperty("KeyControl",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            // Validate the measured seat profile off the Unity main thread. The
+            // profile hashes the 190 MB resources.assets file; doing that lazily
+            // from the first interaction caused a multi-second hitch.
+            SeatData.BeginLoad(entry.Path);
             entry.OnGUI = DrawGui;
             entry.OnSaveGUI = SaveGui;
             entry.OnUpdate = Update;
@@ -78,7 +100,7 @@ namespace PassengerCoachAccess
             overlay.AddComponent<PromptOverlay>();
             MultiplayerSync.Initialize();
             if (WorldStreamingInit.IsLoaded) Registry.Attach(CarSpawner.Instance);
-            entry.Logger.Log("Passenger Coach Access 1.34 loaded; geometry and native interior access enabled.");
+            entry.Logger.Log("Passenger Coach Access 1.35 loaded; stable door access with passenger seats.");
             return true;
         }
 
@@ -90,6 +112,10 @@ namespace PassengerCoachAccess
         public static float GetActivationDistanceForMultiplayer()
         {
             return SanitizeDistance(Settings == null ? 2.25f : Settings.ActivationDistance);
+        }
+        public static bool GetInteractionPromptsForMultiplayer()
+        {
+            return Settings == null || Settings.ShowInteractionPrompts;
         }
 
         public static void LogOptionalMultiplayerFailure(Exception exception)
@@ -107,6 +133,8 @@ namespace PassengerCoachAccess
             }
             action = default(AccessAction);
             visibleDoor = null;
+            executableDoor = null;
+            if (!active && !SeatSession.TryStand()) return false;
             // Native floor/reparenting continues to work when the access UI is disabled.
             return true;
         }
@@ -120,6 +148,11 @@ namespace PassengerCoachAccess
             UnityModManager.UI.DrawKeybindingSmart(Settings.AccessKey, string.Empty,
                 key => Settings.AccessKey = key, GUI.skin.button, GUILayout.Width(180));
             GUILayout.EndHorizontal();
+            bool promptGuiEnabled = GUI.enabled;
+            GUI.enabled = promptGuiEnabled && !MultiplayerSync.IsClient;
+            Settings.ShowInteractionPrompts = GUILayout.Toggle(Settings.ShowInteractionPrompts,
+                Text("Показывать подсказки взаимодействия", "Show interaction prompts"));
+            GUI.enabled = promptGuiEnabled;
             bool wasEnabled = GUI.enabled;
             GUI.enabled = wasEnabled && !MultiplayerSync.IsClient;
             GUILayout.BeginHorizontal();
@@ -141,22 +174,67 @@ namespace PassengerCoachAccess
 
         private static void Update(UnityModManager.ModEntry entry, float deltaTime)
         {
+            if (!entry.Active)
+            {
+                action = default(AccessAction);
+                visibleDoor = null;
+                executableDoor = null;
+                return;
+            }
+            SeatSession.Tick();
             MultiplayerSync.Tick(Time.unscaledTime);
             Registry.Tick();
-            if (!entry.Active || !WorldStreamingInit.IsLoaded || LoadingScreenManager.IsLoading ||
-                UnloadWatcher.isUnloading || !MultiplayerSync.Ready || Time.timeScale == 0f ||
+            // Once the background profile completes, publish at most one coach's
+            // managed seat cache per frame. This keeps a large consist from
+            // turning completion of the shared profile into a second frame spike.
+            if (SeatData.IsReady) Registry.RefreshSeats();
+            if (!WorldStreamingInit.IsLoaded || LoadingScreenManager.IsLoading ||
+                UnloadWatcher.isUnloading || Time.timeScale == 0f ||
                 Cursor.lockState != CursorLockMode.Locked || !RefreshPlayer())
+            {
+                action = default(AccessAction);
+                visibleDoor = null;
+                executableDoor = null;
+                return;
+            }
+            // KeyBinding.Down() is already an edge query (Input System
+            // wasPressedThisFrame with the legacy GetKeyDown fallback).  A second
+            // time gate here used to discard a legitimate first press during the
+            // short interval after entering or traversing a coach.
+            bool pressed = AccessKeyDown();
+            if (SeatSession.Current != null)
+            {
+                action = default(AccessAction);
+                visibleDoor = null;
+                executableDoor = null;
+                if (pressed)
+                {
+                    SeatSession.TryStand();
+                }
+                return;
+            }
+            // A client may lose transport readiness while already seated. Keep
+            // the local stand action available so a network fault cannot trap
+            // the player in the seat; new coach/seat interactions remain gated
+            // below until the host state is ready again.
+            if (!MultiplayerSync.Ready)
             {
                 action = default(AccessAction);
                 visibleDoor = null;
                 return;
             }
-            bool pressed = Settings.AccessKey.Down() && Time.unscaledTime >= nextInput;
-            Registry.RefreshNearby(player.position, pressed);
+            Registry.RefreshNearby(player.position,
+                ShouldForceNearbyRefresh(pressed, action.Door != null || action.Seat != null));
             action = SelectAction(pressed);
-            if (!pressed || action.Door == null) return;
-            nextInput = Time.unscaledTime + 0.35f;
-            try { Execute(action); }
+            if (!pressed || (action.Door == null && action.Seat == null)) return;
+            try
+            {
+                if (action.Seat != null)
+                {
+                    if (!SeatSession.Enter(action.Seat)) Notify("Не удалось занять это место.", "This seat is unavailable.");
+                }
+                else Execute(action);
+            }
             catch (Exception exception)
             {
                 Entry.Logger.LogException(exception);
@@ -180,7 +258,90 @@ namespace PassengerCoachAccess
             }
             return player != null && controller != null && capsule != null &&
                 controller.enabled && !controller.isRepositioning && PlayerManager.PlayerCamera != null &&
-                PlayerManager.ActiveCamera == PlayerManager.PlayerCamera;
+                PlayerManager.ActiveCamera == PlayerManager.PlayerCamera && APlayerTeleport.Instance != null;
+        }
+
+        private static bool AccessKeyDown()
+        {
+            KeyBinding binding = Settings.AccessKey;
+            if (binding == null) return false;
+            try
+            {
+                if (binding.Down()) return true;
+            }
+            catch (Exception error)
+            {
+                LogInputWarning("key edge fallback", error);
+            }
+
+            // KeyBinding.Down intentionally requires an exact modifier set. That
+            // makes a plain T binding disappear while Shift is held for sprint,
+            // even though the key itself was pressed this frame. Preserve any
+            // modifiers explicitly configured for the binding, while allowing
+            // movement modifiers that are unrelated to this action.
+            byte modifiers = binding.modifiers;
+            if (!ModifiersSatisfied(modifiers, KeyBinding.Ctrl(), KeyBinding.Shift(), KeyBinding.Alt())) return false;
+
+            // In legacy-input mode the raw edge is sufficient and avoids a
+            // reflection call on every movement frame. The Input System path is
+            // handled below through the key control's wasPressedThisFrame value.
+            if (!KeyBinding.LegacyInputDisabled)
+                return LegacyKeyDown(binding.keyCode);
+
+            object control;
+            try { control = keyBindingKeyControl == null ? null : keyBindingKeyControl.GetValue(binding, null); }
+            catch (Exception error) { control = null; LogInputWarning("Input System key lookup", error); }
+            if (control != null)
+            {
+                try
+                {
+                    if (keyControlWasPressedThisFrame == null || keyControlRuntimeType != control.GetType())
+                    {
+                        keyControlWasPressedThisFrame = control.GetType().GetProperty("wasPressedThisFrame");
+                        keyControlRuntimeType = control.GetType();
+                    }
+                    if (keyControlWasPressedThisFrame != null &&
+                        (bool)keyControlWasPressedThisFrame.GetValue(control, null)) return true;
+                }
+                catch (Exception error) { LogInputWarning("Input System key edge", error); }
+            }
+            return LegacyKeyDown(binding.keyCode);
+        }
+
+        private static bool LegacyKeyDown(KeyCode key)
+        {
+            try { return key != KeyCode.None && Input.GetKeyDown(key); }
+            catch (Exception error)
+            {
+                LogInputWarning("legacy key edge", error);
+                return false;
+            }
+        }
+
+        private static void LogInputWarning(string stage, Exception error)
+        {
+            if (Entry == null || Entry.Logger == null || Time.unscaledTime < nextInputWarning) return;
+            nextInputWarning = Time.unscaledTime + 5f;
+            Entry.Logger.Warning("Passenger Coach Access " + stage + ": " + error.GetBaseException().Message);
+        }
+
+        private static bool ModifiersSatisfied(byte configured, bool ctrl, bool shift, bool alt)
+        {
+            // A configured modifier is mandatory. Unconfigured modifiers remain
+            // allowed so sprinting with Shift does not suppress a plain keybind.
+            return ((configured & 1) == 0 || ctrl) &&
+                ((configured & 2) == 0 || shift) &&
+                ((configured & 4) == 0 || alt);
+        }
+
+        private static bool ShouldForceNearbyRefresh(bool pressed, bool hasVisibleAction)
+        {
+            // A prompt already represents a live cached context. Replacing the
+            // nearby list in the same key edge can transiently lose a detached
+            // interior collider at a doorway, leaving a visible prompt with no
+            // action. Re-scan when discovering a new action; preserve the context
+            // that produced the current prompt until the action is validated.
+            return pressed && !hasVisibleAction;
         }
 
         private static AccessAction SelectAction(bool forceVisibility)
@@ -190,31 +351,101 @@ namespace PassengerCoachAccess
             Ray ray = PlayerManager.PlayerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
             AccessAction best = default(AccessAction);
             float distance = float.MaxValue;
+            TrainCar attachedCar = PlayerManager.Car;
             for (int i = 0; i < Registry.Nearby.Count; i++)
             {
                 CoachGeometry coach = Registry.Nearby[i];
-                if (!coach.EnsureReady() || (occupied != null && occupied != coach)) continue;
-                bool inside = occupied == coach;
+                bool attachedToCoach = attachedCar != null && attachedCar == coach.Car;
+                if (!coach.EnsureReady() || (occupied != null && occupied != coach && !attachedToCoach)) continue;
                 for (int j = 0; j < coach.Doors.Count; j++)
                 {
                     CoachDoor door = coach.Doors[j];
+                    // The native reparent target is only a discovery hint while
+                    // the controller crosses a doorway.  The action direction is
+                    // always derived from the body position relative to the
+                    // selected doorway, preventing a stale parent from turning
+                    // an outside player into an Exit action.
+                    // The native interior region is the primary inside test.
+                    // During a doorway crossing it can be absent for one frame;
+                    // only then may the attached coach and the selected door
+                    // plane extend the state across that bounded boundary.
+                    bool inside = occupied == coach ||
+                        (attachedToCoach && door.IsBodyInside(body));
+                    bool movingAcrossBoundary = attachedToCoach && occupied != coach;
                     if (!inside && door.Kind == CoachDoorKind.End) continue;
                     float hitDistance;
-                    if (!door.IsAimed(ray, body, Distance, inside, out hitDistance) || hitDistance >= distance) continue;
+                    bool aimed = movingAcrossBoundary ? door.IsAimedWhileMoving(ray, body, Distance, inside, out hitDistance) :
+                        door.IsAimed(ray, body, Distance, inside, out hitDistance);
+                    if (!aimed ||
+                        hitDistance >= distance) continue;
                     CoachDoor target = null;
                     if (door.Kind == CoachDoorKind.End && !Registry.TryGetConnectedDoor(door, out target)) continue;
                     best = new AccessAction { Door = door, Target = target, IsInside = inside };
                     distance = hitDistance;
                 }
             }
-            if (best.Door == null) { visibleDoor = null; return best; }
+            if (best.Door == null && occupied != null)
+            {
+                CoachSeat seat;
+                float seatDistance;
+                // Seat anchors are measured data rather than Unity colliders, so
+                // the same first-obstacle test used by doors must run before a
+                // seat or toilet prompt can be shown.
+                if (occupied.FindSeat(ray, body, Distance, out seat, out seatDistance) &&
+                    HasLineOfSight(ray, seatDistance) &&
+                    HasSeatClearance(seat.Owner.Frame.TransformPoint(seat.Definition.Feet), capsule,
+                        controller.GetTraversableLayers(), seat.Owner))
+                    best = new AccessAction { Seat = seat, IsInside = true };
+            }
+            if (best.Door == null)
+            {
+                visibleDoor = null;
+                return best;
+            }
             if (forceVisibility || visibleDoor != best.Door || Time.unscaledTime >= nextVisibility)
             {
                 visibleDoor = best.Door;
                 nextVisibility = Time.unscaledTime + 0.1f;
                 visible = HasLineOfSight(ray, distance);
             }
-            return visible ? best : default(AccessAction);
+            if (forceVisibility || executableDoor != best.Door || Time.unscaledTime >= nextExecutableCheck)
+            {
+                executableDoor = best.Door;
+                nextExecutableCheck = Time.unscaledTime + 0.1f;
+                executable = CanExecute(best);
+            }
+            return visible && executable ? best : default(AccessAction);
+        }
+
+        private static bool CanExecute(AccessAction selected)
+        {
+            if (APlayerTeleport.Instance == null || selected.Door == null ||
+                selected.Door.Owner == null || !selected.Door.Owner.Alive) return false;
+            CoachDoor destinationDoor = selected.Target ?? selected.Door;
+            if (selected.Target != null)
+            {
+                CoachDoor currentTarget;
+                if (!Registry.TryGetConnectedDoor(selected.Door, out currentTarget) || currentTarget != selected.Target)
+                    return false;
+            }
+            bool goingInside = !selected.IsInside || selected.Target != null;
+            if (goingInside)
+            {
+                TrainCar destination = destinationDoor.Owner.Car;
+                if (destination == null || destination.carLivery == null || !destinationDoor.Owner.EnsureReady()) return false;
+                destinationDoor = destinationDoor.Owner.RefreshDoor(destinationDoor);
+                if (destinationDoor == null) return false;
+                Physics.SyncTransforms();
+                RaycastHit floor;
+                Vector3 point = destinationDoor.WorldThreshold - destinationDoor.WorldNormal * (capsule.radius + 0.22f);
+                return destinationDoor.Owner.TryFloor(point, out floor) &&
+                    Mathf.Abs(Vector3.Dot(floor.point - destinationDoor.WorldThreshold, destinationDoor.Owner.Frame.up)) <= 0.3f &&
+                    HasPlayerClearance(floor.point, capsule, controller.GetTraversableLayers());
+            }
+            RaycastHit support;
+            Vector3 position;
+            Physics.SyncTransforms();
+            return placement.TryExterior(destinationDoor, capsule, controller.GetTraversableLayers(), out support, out position);
         }
 
         private static bool HasLineOfSight(Ray ray, float distance)
@@ -233,11 +464,20 @@ namespace PassengerCoachAccess
 
         private static void Execute(AccessAction selected)
         {
+            if (selected.Door == null || selected.Door.Owner == null || !selected.Door.Owner.Alive)
+            {
+                Notify("Дверь больше недоступна.", "The selected door is no longer available.");
+                return;
+            }
             CoachDoor destinationDoor = selected.Target ?? selected.Door;
             if (selected.Target != null)
             {
                 CoachDoor currentTarget;
-                if (!Registry.TryGetConnectedDoor(selected.Door, out currentTarget) || currentTarget != selected.Target) return;
+                if (!Registry.TryGetConnectedDoor(selected.Door, out currentTarget) || currentTarget != selected.Target)
+                {
+                    Notify("Сцепка или соседний вагон изменились.", "The coupling or neighboring coach changed.");
+                    return;
+                }
             }
             bool goingInside = !selected.IsInside || selected.Target != null;
             TrainCar destination = goingInside ? destinationDoor.Owner.Car : null;
@@ -245,11 +485,23 @@ namespace PassengerCoachAccess
             Vector3 position;
             if (goingInside)
             {
-                if (destination == null || destination.carLivery == null) return;
+                if (destination == null || destination.carLivery == null)
+                {
+                    Notify("Вагон больше недоступен.", "The destination coach is no longer available.");
+                    return;
+                }
                 if (destination.carLivery.interiorPrefab != null && !destination.IsInteriorLoaded) destination.LoadInterior();
-                if (!destinationDoor.Owner.EnsureReady()) return;
+                if (!destinationDoor.Owner.EnsureReady())
+                {
+                    Notify("Интерьер вагона ещё не готов.", "The coach interior is not ready yet.");
+                    return;
+                }
                 destinationDoor = destinationDoor.Owner.RefreshDoor(destinationDoor);
-                if (destinationDoor == null) return;
+                if (destinationDoor == null)
+                {
+                    Notify("Цель двери изменилась.", "The selected door changed; aim again.");
+                    return;
+                }
                 Physics.SyncTransforms();
                 Vector3 point = destinationDoor.WorldThreshold - destinationDoor.WorldNormal * (capsule.radius + 0.22f);
                 if (!destinationDoor.Owner.TryFloor(point, out floor) ||
@@ -276,7 +528,11 @@ namespace PassengerCoachAccess
                     return;
                 }
             }
-            if (APlayerTeleport.Instance == null) return;
+            if (APlayerTeleport.Instance == null)
+            {
+                Notify("Штатная система перемещения ещё не готова.", "The native teleport system is not ready yet.");
+                return;
+            }
             PlayerManager.TeleportPlayer(position, player.rotation, goingInside ? destination.interior : floor.transform, false, false);
         }
 
@@ -285,7 +541,7 @@ namespace PassengerCoachAccess
             return collider == null || collider.transform == player || collider.transform.IsChildOf(player);
         }
 
-        private static void Notify(string ru, string en)
+        internal static void Notify(string ru, string en)
         {
             noticeRu = ru; noticeEn = en; noticeUntil = Time.unscaledTime + 3f;
         }
@@ -294,6 +550,7 @@ namespace PassengerCoachAccess
         {
             public CoachDoor Door;
             public CoachDoor Target;
+            public CoachSeat Seat;
             public bool IsInside;
         }
 
@@ -303,13 +560,19 @@ namespace PassengerCoachAccess
             private void OnGUI()
             {
                 if (Entry == null || !Entry.Active || Cursor.lockState != CursorLockMode.Locked) return;
-                if (action.Door == null && Time.unscaledTime >= noticeUntil) return;
+                bool notice = Time.unscaledTime < noticeUntil;
+                bool interaction = action.Door != null || action.Seat != null ||
+                    (SeatSession.Current != null && !SeatSession.IsTransitioning);
+                if (!notice && (!interaction || !MultiplayerSync.ShowInteractionPrompts)) return;
                 if (style == null) style = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter,
                     fontSize = 17, fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
-                string text = Text(noticeRu, noticeEn);
-                if (action.Door != null)
+                string text = notice ? Text(noticeRu, noticeEn) : string.Empty;
+                if (!notice && MultiplayerSync.ShowInteractionPrompts)
                 {
-                    string verb = action.Target != null ? Text("перейти в соседний вагон", "move to the next coach") :
+                    string verb;
+                    if (SeatSession.Current != null && !SeatSession.IsTransitioning) verb = Text("встать", "stand up");
+                    else if (action.Seat != null) verb = action.Seat.IsToilet ? Text("сесть в туалете", "sit on the toilet") : Text("сесть", "sit down");
+                    else verb = action.Target != null ? Text("перейти в соседний вагон", "move to the next coach") :
                         action.IsInside ? Text("выйти из вагона", "exit the coach") : Text("войти в вагон", "enter the coach");
                     text = Text("Нажмите ", "Press ") + Settings.AccessKey.keyCode + Text(", чтобы ", " to ") + verb;
                 }
