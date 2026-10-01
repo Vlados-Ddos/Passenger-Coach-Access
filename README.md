@@ -1,11 +1,10 @@
 # Passenger Coach Access
 
-A mod for Passenger Jobs: approach the side door of a passenger coach and aim directly at the door. Only then will the prompt with the assigned key appear.
-The player will be moved directly behind the selected side door and properly attached to the moving coach.
-Pressing the key again exits through the side door.
+A Passenger Jobs mod that adds easier interaction with passenger coaches. Aim at a side door to enter or exit the coach using the assigned interaction key.
 
-Through an end door, you can only move directly into the adjacent coupled passenger coach.
-Free end doors are not entry or exit points.
+You can also interact with individual passenger seats and toilet seats using the same key. While seated, you remain properly attached to the moving coach.
+
+End doors can only be used to enter an adjacent coupled passenger coach.
 
 The key and activation distance can be changed in the Unity Mod Manager menu (`Ctrl+F10`).
 
@@ -26,13 +25,11 @@ No Passenger Jobs data is modified: coach types are determined through its regis
 
 # Passenger Coach Access
 
-Мод для Passenger Jobs: подойдите к боковой двери пассажирского вагона и наведите прицел
-прямо на дверь. Только в этом случае появится подсказка с назначенной клавишей.
-Игрок переместится сразу за выбранную боковую дверь и штатно прикрепится к движущемуся вагону.
-Повторное нажатие выводит через боковую дверь.
+Мод для Passenger Jobs, добавляющий удобное взаимодействие с пассажирскими вагонами. Наведитесь на боковую дверь, чтобы войти в вагон или выйти из него с помощью назначенной клавиши.
 
-Через торцевую дверь можно перейти только прямо в соседний сцепленный пассажирский вагон.
-Свободные торцевые двери не являются точками входа или выхода.
+Также можно взаимодействовать с отдельными пассажирскими сиденьями и туалетами, используя ту же клавишу. Во время поездки игрок остаётся прикреплён к движущемуся вагону.
+
+Через торцевую дверь можно перейти только в соседний сцепленный пассажирский вагон.
 
 Клавишу и расстояние активации можно изменить в меню Unity Mod Manager (`Ctrl+F10`).
 
